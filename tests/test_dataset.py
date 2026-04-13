@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config
@@ -187,7 +188,6 @@ class TestTestSetImages:
         )
         batch1 = next(iter(test_loader1))
         batch2 = next(iter(test_loader2))
-        import torch
         assert torch.allclose(batch1["image"], batch2["image"])
 
     def test_test_set_covers_all_classes(self, synthetic_data_dir, tmp_path, monkeypatch):
