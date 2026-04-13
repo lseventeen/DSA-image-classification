@@ -1,10 +1,19 @@
 """
 Training script for medical image classification using MONAI.
 
+Features (nnU-Net inspired):
+- Wandb experiment tracking
+- Automatic mixed-precision (AMP) training
+- Gradient clipping
+- Cosine-annealing LR scheduler (or StepLR)
+- Full checkpoint saving with resume support
+
 Usage:
     python train.py
     python train.py --epochs 100 --batch_size 32 --lr 0.0001
     python train.py --model densenet169 --freeze_backbone
+    python train.py --no_wandb          # disable wandb
+    python train.py --resume outputs/checkpoints/last_checkpoint.pth
 """
 
 import argparse
@@ -15,31 +24,110 @@ import numpy as np
 import torch
 import torch.nn as nn
 from monai.utils import set_determinism
+from torch.cuda.amp import GradScaler, autocast
 from torch.optim import Adam
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR
 from tqdm import tqdm
 
 import config
 from dataset import create_data_loaders
 from model import SUPPORTED_MODELS, build_model
 
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
-def train_one_epoch(model, loader, criterion, optimizer, device):
-    """Train for one epoch and return average loss and accuracy."""
+
+# ---------------------------------------------------------------------------
+# Wandb helpers
+# ---------------------------------------------------------------------------
+
+def _init_wandb(args, num_classes, class_names):
+    """Initialise a wandb run (no-op when disabled or unavailable)."""
+    if not args.use_wandb:
+        return None
+    if wandb is None:
+        print("Warning: wandb is not installed. Skipping wandb logging.")
+        return None
+
+    run = wandb.init(
+        project=config.WANDB_PROJECT,
+        entity=config.WANDB_ENTITY,
+        config={
+            "model": args.model,
+            "epochs": args.epochs,
+            "batch_size": args.batch_size,
+            "learning_rate": args.lr,
+            "weight_decay": args.weight_decay,
+            "scheduler_type": args.scheduler_type,
+            "scheduler_step": args.scheduler_step,
+            "scheduler_gamma": args.scheduler_gamma,
+            "patience": args.patience,
+            "freeze_backbone": args.freeze_backbone,
+            "dropout_prob": config.DROPOUT_PROB,
+            "img_size": config.IMG_SIZE,
+            "in_channels": config.IN_CHANNELS,
+            "num_classes": num_classes,
+            "class_names": class_names,
+            "seed": args.seed,
+            "use_amp": args.use_amp,
+            "grad_clip": args.grad_clip,
+        },
+        reinit=True,
+    )
+    return run
+
+
+def _log_wandb(run, metrics, epoch):
+    """Log a dict of metrics to wandb for the given epoch."""
+    if run is None:
+        return
+    wandb.log(metrics, step=epoch)
+
+
+def _finish_wandb(run):
+    """Finish the wandb run gracefully."""
+    if run is None:
+        return
+    wandb.finish()
+
+
+# ---------------------------------------------------------------------------
+# Training / validation loops
+# ---------------------------------------------------------------------------
+
+def train_one_epoch(model, loader, criterion, optimizer, device,
+                    scaler=None, grad_clip=0.0):
+    """Train for one epoch with optional AMP and gradient clipping."""
     model.train()
     running_loss = 0.0
     correct = 0
     total = 0
+    use_amp = scaler is not None
 
     for batch_data in tqdm(loader, desc="  Train", leave=False):
         images = batch_data["image"].to(device)
         labels = batch_data["label"].to(device, dtype=torch.long)
 
-        optimizer.zero_grad()
-        outputs = model(images)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+
+        with autocast(enabled=use_amp):
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+
+        if use_amp:
+            scaler.scale(loss).backward()
+            if grad_clip > 0:
+                scaler.unscale_(optimizer)
+                nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            if grad_clip > 0:
+                nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            optimizer.step()
 
         running_loss += loss.item() * images.size(0)
         _, predicted = outputs.max(1)
@@ -76,8 +164,53 @@ def validate(model, loader, criterion, device):
     return avg_loss, accuracy
 
 
+# ---------------------------------------------------------------------------
+# Checkpoint helpers
+# ---------------------------------------------------------------------------
+
+def _save_checkpoint(path, model, optimizer, scheduler, scaler, epoch,
+                     best_test_acc, history):
+    """Save a full checkpoint (model + training state) for resume."""
+    state = {
+        "epoch": epoch,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "scheduler_state_dict": scheduler.state_dict(),
+        "best_test_acc": best_test_acc,
+        "history": history,
+    }
+    if scaler is not None:
+        state["scaler_state_dict"] = scaler.state_dict()
+    torch.save(state, path)
+
+
+def _load_checkpoint(path, model, optimizer, scheduler, scaler, device):
+    """Load a checkpoint and restore training state.
+
+    Note: ``weights_only=False`` is required here because the checkpoint
+    contains optimizer / scheduler state dicts with non-trivial objects.
+    Only load checkpoints that you trust (i.e. produced by this codebase).
+
+    Returns:
+        (start_epoch, best_test_acc, history)
+    """
+    # weights_only=False is needed for optimizer/scheduler state dicts
+    ckpt = torch.load(path, map_location=device, weights_only=False)  # nosec
+    model.load_state_dict(ckpt["model_state_dict"])
+    optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+    scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+    if scaler is not None and "scaler_state_dict" in ckpt:
+        scaler.load_state_dict(ckpt["scaler_state_dict"])
+    return ckpt["epoch"], ckpt["best_test_acc"], ckpt["history"]
+
+
+# ---------------------------------------------------------------------------
+# Main training entry-point
+# ---------------------------------------------------------------------------
+
 def train(args):
-    """Main training loop with early stopping and model checkpointing."""
+    """Main training loop with wandb, AMP, gradient clipping, and
+    cosine-annealing LR scheduler."""
     set_determinism(seed=args.seed)
     config.setup_dirs()
 
@@ -116,28 +249,59 @@ def train(args):
         lr=args.lr,
         weight_decay=args.weight_decay,
     )
-    scheduler = StepLR(
-        optimizer, step_size=args.scheduler_step,
-        gamma=args.scheduler_gamma,
-    )
 
-    # --- Training loop ---
+    if args.scheduler_type == "cosine":
+        scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=0)
+    else:
+        scheduler = StepLR(
+            optimizer, step_size=args.scheduler_step,
+            gamma=args.scheduler_gamma,
+        )
+
+    # --- AMP scaler ---
+    use_amp = args.use_amp and device.type == "cuda"
+    scaler = GradScaler() if use_amp else None
+    if use_amp:
+        print("Automatic Mixed Precision (AMP) enabled")
+
+    # --- Wandb ---
+    wb_run = _init_wandb(args, num_classes, class_names)
+    if wb_run is not None:
+        wandb.watch(model, log="gradients", log_freq=100)
+
+    # --- Resume ---
+    start_epoch = 1
     best_test_acc = 0.0
-    patience_counter = 0
     history = {
         "train_loss": [], "train_acc": [],
         "test_loss": [], "test_acc": [],
     }
 
+    if args.resume:
+        print(f"Resuming from checkpoint: {args.resume}")
+        last_epoch, best_test_acc, history = _load_checkpoint(
+            args.resume, model, optimizer, scheduler, scaler, device,
+        )
+        start_epoch = last_epoch + 1
+        print(f"  Resumed at epoch {start_epoch}, "
+              f"best_test_acc={best_test_acc:.4f}")
+
+    # --- Training loop ---
+    patience_counter = 0
+
     print(f"\n{'=' * 60}")
-    print(f"Starting training for {args.epochs} epochs")
+    print(f"Starting training for {args.epochs} epochs "
+          f"(from epoch {start_epoch})")
+    print(f"Scheduler: {args.scheduler_type} | "
+          f"Grad clip: {args.grad_clip} | AMP: {use_amp}")
     print(f"{'=' * 60}\n")
 
     start_time = time.time()
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         train_loss, train_acc = train_one_epoch(
-            model, train_loader, criterion, optimizer, device
+            model, train_loader, criterion, optimizer, device,
+            scaler=scaler, grad_clip=args.grad_clip,
         )
         test_loss, test_acc = validate(model, test_loader, criterion, device)
         scheduler.step()
@@ -155,13 +319,27 @@ def train(args):
             f"LR: {lr:.6f}"
         )
 
+        # --- Wandb logging ---
+        if epoch % config.WANDB_LOG_FREQ == 0:
+            _log_wandb(wb_run, {
+                "train/loss": train_loss,
+                "train/accuracy": train_acc,
+                "val/loss": test_loss,
+                "val/accuracy": test_acc,
+                "lr": lr,
+                "epoch": epoch,
+            }, epoch)
+
         # Checkpoint best model
         if test_acc > best_test_acc:
             best_test_acc = test_acc
             patience_counter = 0
-            ckpt_path = config.CHECKPOINT_DIR / "best_model.pth"
-            torch.save(model.state_dict(), ckpt_path)
+            best_path = config.CHECKPOINT_DIR / "best_model.pth"
+            torch.save(model.state_dict(), best_path)
             print(f"  ✓ Best model saved (test_acc={test_acc:.4f})")
+            if wb_run is not None:
+                wandb.run.summary["best_test_acc"] = best_test_acc
+                wandb.run.summary["best_epoch"] = epoch
         else:
             patience_counter += 1
             if patience_counter >= args.patience:
@@ -170,6 +348,13 @@ def train(args):
                     f"(no improvement for {args.patience} epochs)"
                 )
                 break
+
+        # Save resumable checkpoint every epoch
+        _save_checkpoint(
+            config.CHECKPOINT_DIR / "last_checkpoint.pth",
+            model, optimizer, scheduler, scaler,
+            epoch, best_test_acc, history,
+        )
 
     elapsed = time.time() - start_time
     print(f"\nTraining complete in {elapsed / 60:.1f} minutes")
@@ -188,6 +373,7 @@ def train(args):
     with open(config.CHECKPOINT_DIR / "meta.json", "w") as f:
         json.dump(meta, f, indent=2)
 
+    _finish_wandb(wb_run)
     return history
 
 
@@ -213,13 +399,49 @@ def parse_args():
         "--patience", type=int, default=config.EARLY_STOPPING_PATIENCE
     )
     parser.add_argument(
+        "--scheduler_type", type=str, default=config.SCHEDULER_TYPE,
+        choices=["step", "cosine"],
+        help="LR scheduler type: 'step' (StepLR) or 'cosine' (CosineAnnealing)",
+    )
+    parser.add_argument(
         "--scheduler_step", type=int, default=config.SCHEDULER_STEP
     )
     parser.add_argument(
         "--scheduler_gamma", type=float, default=config.SCHEDULER_GAMMA
     )
+    parser.add_argument(
+        "--grad_clip", type=float, default=config.GRAD_CLIP_MAX_NORM,
+        help="Max gradient norm for clipping (0 to disable)",
+    )
+    parser.add_argument(
+        "--use_amp", action="store_true", default=config.USE_AMP,
+        help="Enable automatic mixed precision training",
+    )
+    parser.add_argument(
+        "--no_amp", action="store_true",
+        help="Disable AMP even if config enables it",
+    )
+    parser.add_argument(
+        "--use_wandb", action="store_true", default=config.WANDB_ENABLED,
+        help="Enable wandb logging",
+    )
+    parser.add_argument(
+        "--no_wandb", action="store_true",
+        help="Disable wandb logging",
+    )
+    parser.add_argument(
+        "--resume", type=str, default=None,
+        help="Path to checkpoint to resume training from",
+    )
     parser.add_argument("--seed", type=int, default=config.SEED)
-    return parser.parse_args()
+
+    args = parser.parse_args()
+    # Handle negative flags
+    if args.no_amp:
+        args.use_amp = False
+    if args.no_wandb:
+        args.use_wandb = False
+    return args
 
 
 if __name__ == "__main__":

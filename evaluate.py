@@ -1,9 +1,12 @@
 """
 Evaluation script — generates detailed metrics and visualizations.
 
+Optionally logs results to an existing wandb run or creates a new one.
+
 Usage:
     python evaluate.py
     python evaluate.py --checkpoint outputs/checkpoints/best_model.pth
+    python evaluate.py --use_wandb
 """
 
 import argparse
@@ -26,6 +29,11 @@ from tqdm import tqdm
 import config
 from dataset import create_data_loaders
 from model import build_model
+
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 
 @torch.no_grad()
@@ -66,6 +74,7 @@ def plot_confusion_matrix(labels, preds, class_names, save_path):
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
     print(f"Confusion matrix saved to {save_path}")
+    return fig
 
 
 def plot_training_history(history_path, save_path):
@@ -99,10 +108,11 @@ def plot_training_history(history_path, save_path):
     fig.savefig(save_path, dpi=150)
     plt.close(fig)
     print(f"Training curves saved to {save_path}")
+    return fig
 
 
 def evaluate(args):
-    """Run full evaluation pipeline."""
+    """Run full evaluation pipeline with optional wandb logging."""
     config.setup_dirs()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -145,6 +155,9 @@ def evaluate(args):
     report = classification_report(
         labels, preds, target_names=class_names, digits=4
     )
+    report_dict = classification_report(
+        labels, preds, target_names=class_names, digits=4, output_dict=True
+    )
     print(f"\nTest Accuracy: {acc:.4f}\n")
     print("Classification Report:")
     print(report)
@@ -162,9 +175,33 @@ def evaluate(args):
 
     # Training curves
     history_path = config.LOG_DIR / "training_history.json"
+    curves_path = config.OUTPUT_DIR / "training_curves.png"
     if history_path.exists():
-        curves_path = config.OUTPUT_DIR / "training_curves.png"
         plot_training_history(history_path, curves_path)
+
+    # --- Wandb logging ---
+    if args.use_wandb and wandb is not None:
+        wb_run = wandb.init(
+            project=config.WANDB_PROJECT,
+            entity=config.WANDB_ENTITY,
+            job_type="evaluation",
+            reinit=True,
+        )
+        metrics = {
+            "eval/accuracy": acc,
+            "eval/confusion_matrix": wandb.Image(str(cm_path)),
+        }
+        if history_path.exists():
+            metrics["eval/training_curves"] = wandb.Image(str(curves_path))
+        # Per-class metrics in a single log call
+        for cls_name in class_names:
+            if cls_name in report_dict:
+                metrics[f"eval/{cls_name}/precision"] = report_dict[cls_name]["precision"]
+                metrics[f"eval/{cls_name}/recall"] = report_dict[cls_name]["recall"]
+                metrics[f"eval/{cls_name}/f1-score"] = report_dict[cls_name]["f1-score"]
+        wandb.log(metrics)
+        wandb.finish()
+        print("Results logged to wandb")
 
 
 def parse_args():
@@ -177,6 +214,10 @@ def parse_args():
     parser.add_argument(
         "--model", type=str, default=config.MODEL_NAME,
         help="Model architecture (used if meta.json not found)",
+    )
+    parser.add_argument(
+        "--use_wandb", action="store_true", default=False,
+        help="Log evaluation results to wandb",
     )
     return parser.parse_args()
 
