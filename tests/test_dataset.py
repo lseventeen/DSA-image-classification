@@ -99,6 +99,115 @@ class TestCreateDataLoaders:
         assert batch["image"].ndim == 4  # (B, C, H, W)
 
 
+class TestTestSetImages:
+    """Tests focused on the test-set split: content, format, and correctness."""
+
+    def test_test_batch_content(self, synthetic_data_dir, tmp_path, monkeypatch):
+        """Test-set batches should contain 'image' and 'label' tensors."""
+        data_dir, _ = synthetic_data_dir
+        monkeypatch.setattr(config, "DATA_DIR", data_dir)
+        monkeypatch.setattr(config, "IMG_SIZE", 32)
+        monkeypatch.setattr(config, "SPLIT_FILE", tmp_path / "split.json")
+        monkeypatch.setattr(config, "TEST_RATIO", 0.5)
+
+        _, test_loader, _ = create_data_loaders(
+            data_dir=data_dir, batch_size=2, num_workers=0, seed=42,
+        )
+        batch = next(iter(test_loader))
+        assert "image" in batch
+        assert "label" in batch
+        assert batch["image"].ndim == 4  # (B, C, H, W)
+        assert batch["image"].shape[1] == 1  # single channel
+
+    def test_test_labels_valid(self, synthetic_data_dir, tmp_path, monkeypatch):
+        """Every label in the test set should be a valid class index."""
+        data_dir, _ = synthetic_data_dir
+        monkeypatch.setattr(config, "DATA_DIR", data_dir)
+        monkeypatch.setattr(config, "IMG_SIZE", 32)
+        monkeypatch.setattr(config, "SPLIT_FILE", tmp_path / "split.json")
+        monkeypatch.setattr(config, "TEST_RATIO", 0.5)
+
+        _, test_loader, class_names = create_data_loaders(
+            data_dir=data_dir, batch_size=2, num_workers=0, seed=42,
+        )
+        num_classes = len(class_names)
+        for batch in test_loader:
+            labels = batch["label"]
+            assert (labels >= 0).all()
+            assert (labels < num_classes).all()
+
+    def test_test_images_disjoint_from_train(self, synthetic_data_dir, tmp_path, monkeypatch):
+        """Test-set images must not overlap with the training set."""
+        data_dir, _ = synthetic_data_dir
+        split_file = tmp_path / "split.json"
+        monkeypatch.setattr(config, "DATA_DIR", data_dir)
+        monkeypatch.setattr(config, "IMG_SIZE", 32)
+        monkeypatch.setattr(config, "SPLIT_FILE", split_file)
+        monkeypatch.setattr(config, "TEST_RATIO", 0.5)
+
+        create_data_loaders(data_dir=data_dir, batch_size=2, num_workers=0, seed=42)
+
+        with open(split_file) as f:
+            split = json.load(f)
+        train_paths = {item["image"] for item in split["train"]}
+        test_paths = {item["image"] for item in split["test"]}
+        assert train_paths.isdisjoint(test_paths), "Train and test sets share images"
+
+    def test_test_set_ratio(self, synthetic_data_dir, tmp_path, monkeypatch):
+        """Test set size should respect the configured TEST_RATIO."""
+        data_dir, _ = synthetic_data_dir
+        split_file = tmp_path / "split.json"
+        monkeypatch.setattr(config, "DATA_DIR", data_dir)
+        monkeypatch.setattr(config, "IMG_SIZE", 32)
+        monkeypatch.setattr(config, "SPLIT_FILE", split_file)
+        monkeypatch.setattr(config, "TEST_RATIO", 0.5)
+
+        _, test_loader, _ = create_data_loaders(
+            data_dir=data_dir, batch_size=2, num_workers=0, seed=42,
+        )
+        total = 12  # 2 classes × 6 images
+        test_size = len(test_loader.dataset)
+        expected = int(total * 0.5)
+        assert test_size == expected
+
+    def test_test_set_deterministic(self, synthetic_data_dir, tmp_path, monkeypatch):
+        """Running val transforms on the same test image twice should give identical results."""
+        data_dir, _ = synthetic_data_dir
+        split_file = tmp_path / "split.json"
+        monkeypatch.setattr(config, "DATA_DIR", data_dir)
+        monkeypatch.setattr(config, "IMG_SIZE", 32)
+        monkeypatch.setattr(config, "SPLIT_FILE", split_file)
+        monkeypatch.setattr(config, "TEST_RATIO", 0.5)
+
+        _, test_loader1, _ = create_data_loaders(
+            data_dir=data_dir, batch_size=6, num_workers=0, seed=42,
+        )
+        _, test_loader2, _ = create_data_loaders(
+            data_dir=data_dir, batch_size=6, num_workers=0, seed=42,
+        )
+        batch1 = next(iter(test_loader1))
+        batch2 = next(iter(test_loader2))
+        import torch
+        assert torch.allclose(batch1["image"], batch2["image"])
+
+    def test_test_set_covers_all_classes(self, synthetic_data_dir, tmp_path, monkeypatch):
+        """The test set should contain images from every class."""
+        data_dir, _ = synthetic_data_dir
+        split_file = tmp_path / "split.json"
+        monkeypatch.setattr(config, "DATA_DIR", data_dir)
+        monkeypatch.setattr(config, "IMG_SIZE", 32)
+        monkeypatch.setattr(config, "SPLIT_FILE", split_file)
+        monkeypatch.setattr(config, "TEST_RATIO", 0.5)
+
+        _, test_loader, class_names = create_data_loaders(
+            data_dir=data_dir, batch_size=12, num_workers=0, seed=42,
+        )
+        all_labels = set()
+        for batch in test_loader:
+            all_labels.update(batch["label"].tolist())
+        assert all_labels == set(range(len(class_names)))
+
+
 class TestSupportedExtensions:
     """SUPPORTED_EXTENSIONS should include common medical image formats."""
 
