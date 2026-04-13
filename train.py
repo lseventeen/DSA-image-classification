@@ -187,10 +187,15 @@ def _save_checkpoint(path, model, optimizer, scheduler, scaler, epoch,
 def _load_checkpoint(path, model, optimizer, scheduler, scaler, device):
     """Load a checkpoint and restore training state.
 
+    Note: ``weights_only=False`` is required here because the checkpoint
+    contains optimizer / scheduler state dicts with non-trivial objects.
+    Only load checkpoints that you trust (i.e. produced by this codebase).
+
     Returns:
         (start_epoch, best_test_acc, history)
     """
-    ckpt = torch.load(path, map_location=device, weights_only=False)
+    # weights_only=False is needed for optimizer/scheduler state dicts
+    ckpt = torch.load(path, map_location=device, weights_only=False)  # nosec
     model.load_state_dict(ckpt["model_state_dict"])
     optimizer.load_state_dict(ckpt["optimizer_state_dict"])
     scheduler.load_state_dict(ckpt["scheduler_state_dict"])

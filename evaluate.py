@@ -187,20 +187,19 @@ def evaluate(args):
             job_type="evaluation",
             reinit=True,
         )
-        wandb.log({
+        metrics = {
             "eval/accuracy": acc,
             "eval/confusion_matrix": wandb.Image(str(cm_path)),
-        })
+        }
         if history_path.exists():
-            wandb.log({"eval/training_curves": wandb.Image(str(curves_path))})
-        # Log per-class metrics
+            metrics["eval/training_curves"] = wandb.Image(str(curves_path))
+        # Per-class metrics in a single log call
         for cls_name in class_names:
             if cls_name in report_dict:
-                wandb.log({
-                    f"eval/{cls_name}/precision": report_dict[cls_name]["precision"],
-                    f"eval/{cls_name}/recall": report_dict[cls_name]["recall"],
-                    f"eval/{cls_name}/f1-score": report_dict[cls_name]["f1-score"],
-                })
+                metrics[f"eval/{cls_name}/precision"] = report_dict[cls_name]["precision"]
+                metrics[f"eval/{cls_name}/recall"] = report_dict[cls_name]["recall"]
+                metrics[f"eval/{cls_name}/f1-score"] = report_dict[cls_name]["f1-score"]
+        wandb.log(metrics)
         wandb.finish()
         print("Results logged to wandb")
 
