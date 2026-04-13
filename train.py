@@ -1,37 +1,27 @@
 """
-Training script for X-ray image classification.
+Training script for medical image classification using MONAI.
 
 Usage:
     python train.py
     python train.py --epochs 100 --batch_size 32 --lr 0.0001
-    python train.py --model resnet50 --freeze_backbone
+    python train.py --model densenet169 --freeze_backbone
 """
 
 import argparse
 import json
 import time
-from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn as nn
+from monai.utils import set_determinism
 from torch.optim import Adam
 from torch.optim.lr_scheduler import StepLR
 from tqdm import tqdm
 
 import config
 from dataset import create_data_loaders
-from model import build_model
-
-
-def set_seed(seed):
-    """Set random seeds for reproducibility."""
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+from model import SUPPORTED_MODELS, build_model
 
 
 def train_one_epoch(model, loader, criterion, optimizer, device):
@@ -41,8 +31,9 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
     correct = 0
     total = 0
 
-    for images, labels in tqdm(loader, desc="  Train", leave=False):
-        images, labels = images.to(device), labels.to(device)
+    for batch_data in tqdm(loader, desc="  Train", leave=False):
+        images = batch_data["image"].to(device)
+        labels = batch_data["label"].to(device, dtype=torch.long)
 
         optimizer.zero_grad()
         outputs = model(images)
@@ -68,8 +59,10 @@ def validate(model, loader, criterion, device):
     correct = 0
     total = 0
 
-    for images, labels in tqdm(loader, desc="  Val  ", leave=False):
-        images, labels = images.to(device), labels.to(device)
+    for batch_data in tqdm(loader, desc="  Val  ", leave=False):
+        images = batch_data["image"].to(device)
+        labels = batch_data["label"].to(device, dtype=torch.long)
+
         outputs = model(images)
         loss = criterion(outputs, labels)
 
@@ -85,7 +78,7 @@ def validate(model, loader, criterion, device):
 
 def train(args):
     """Main training loop with early stopping and model checkpointing."""
-    set_seed(args.seed)
+    set_determinism(seed=args.seed)
     config.setup_dirs()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -102,12 +95,16 @@ def train(args):
     model = build_model(
         num_classes=num_classes,
         model_name=args.model,
-        pretrained=True,
+        in_channels=config.IN_CHANNELS,
+        pretrained=config.PRETRAINED,
         freeze_backbone=args.freeze_backbone,
+        dropout_prob=config.DROPOUT_PROB,
     )
     model.to(device)
 
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    trainable_params = sum(
+        p.numel() for p in model.parameters() if p.requires_grad
+    )
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Model: {args.model} | "
           f"Trainable params: {trainable_params:,} / {total_params:,}")
@@ -119,17 +116,22 @@ def train(args):
         lr=args.lr,
         weight_decay=args.weight_decay,
     )
-    scheduler = StepLR(optimizer, step_size=args.scheduler_step,
-                       gamma=args.scheduler_gamma)
+    scheduler = StepLR(
+        optimizer, step_size=args.scheduler_step,
+        gamma=args.scheduler_gamma,
+    )
 
     # --- Training loop ---
     best_val_acc = 0.0
     patience_counter = 0
-    history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
+    history = {
+        "train_loss": [], "train_acc": [],
+        "val_loss": [], "val_acc": [],
+    }
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Starting training for {args.epochs} epochs")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     start_time = time.time()
 
@@ -163,12 +165,14 @@ def train(args):
         else:
             patience_counter += 1
             if patience_counter >= args.patience:
-                print(f"\nEarly stopping at epoch {epoch} "
-                      f"(no improvement for {args.patience} epochs)")
+                print(
+                    f"\nEarly stopping at epoch {epoch} "
+                    f"(no improvement for {args.patience} epochs)"
+                )
                 break
 
     elapsed = time.time() - start_time
-    print(f"\nTraining complete in {elapsed/60:.1f} minutes")
+    print(f"\nTraining complete in {elapsed / 60:.1f} minutes")
     print(f"Best validation accuracy: {best_val_acc:.4f}")
 
     # --- Save final model and training history ---
@@ -185,14 +189,22 @@ def train(args):
         json.dump(meta, f, indent=2)
 
     # --- Evaluate on test set ---
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Evaluating on test set...")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
-    best_model = build_model(num_classes, model_name=args.model, pretrained=False)
+    best_model = build_model(
+        num_classes,
+        model_name=args.model,
+        in_channels=config.IN_CHANNELS,
+        pretrained=False,
+    )
     best_model.load_state_dict(
-        torch.load(config.CHECKPOINT_DIR / "best_model.pth",
-                    map_location=device, weights_only=True)
+        torch.load(
+            config.CHECKPOINT_DIR / "best_model.pth",
+            map_location=device,
+            weights_only=True,
+        )
     )
     best_model.to(device)
 
@@ -204,23 +216,31 @@ def train(args):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Train X-ray image classifier"
+        description="Train medical image classifier (MONAI)"
     )
     parser.add_argument("--epochs", type=int, default=config.EPOCHS)
     parser.add_argument("--batch_size", type=int, default=config.BATCH_SIZE)
     parser.add_argument("--lr", type=float, default=config.LEARNING_RATE)
-    parser.add_argument("--weight_decay", type=float,
-                        default=config.WEIGHT_DECAY)
-    parser.add_argument("--model", type=str, default=config.MODEL_NAME,
-                        choices=["resnet18", "resnet34", "resnet50"])
-    parser.add_argument("--freeze_backbone", action="store_true",
-                        default=config.FREEZE_BACKBONE)
-    parser.add_argument("--patience", type=int,
-                        default=config.EARLY_STOPPING_PATIENCE)
-    parser.add_argument("--scheduler_step", type=int,
-                        default=config.SCHEDULER_STEP)
-    parser.add_argument("--scheduler_gamma", type=float,
-                        default=config.SCHEDULER_GAMMA)
+    parser.add_argument(
+        "--weight_decay", type=float, default=config.WEIGHT_DECAY
+    )
+    parser.add_argument(
+        "--model", type=str, default=config.MODEL_NAME,
+        choices=SUPPORTED_MODELS,
+    )
+    parser.add_argument(
+        "--freeze_backbone", action="store_true",
+        default=config.FREEZE_BACKBONE,
+    )
+    parser.add_argument(
+        "--patience", type=int, default=config.EARLY_STOPPING_PATIENCE
+    )
+    parser.add_argument(
+        "--scheduler_step", type=int, default=config.SCHEDULER_STEP
+    )
+    parser.add_argument(
+        "--scheduler_gamma", type=float, default=config.SCHEDULER_GAMMA
+    )
     parser.add_argument("--seed", type=int, default=config.SEED)
     return parser.parse_args()
 
