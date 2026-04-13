@@ -32,9 +32,18 @@ BATCH_SIZE = 16
 EPOCHS = 50
 LEARNING_RATE = 1e-4
 WEIGHT_DECAY = 1e-4
-SCHEDULER_STEP = 10     # StepLR step size
-SCHEDULER_GAMMA = 0.5   # StepLR gamma
+SCHEDULER_TYPE = "cosine"  # "step" or "cosine" (nnU-Net style poly/cosine)
+SCHEDULER_STEP = 10        # StepLR step size (only used when SCHEDULER_TYPE="step")
+SCHEDULER_GAMMA = 0.5      # StepLR gamma (only used when SCHEDULER_TYPE="step")
 EARLY_STOPPING_PATIENCE = 10  # Early stopping patience
+GRAD_CLIP_MAX_NORM = 1.0   # Max gradient norm for clipping (0 to disable)
+USE_AMP = True              # Use automatic mixed precision training
+
+# ============ Wandb Configuration ============
+WANDB_ENABLED = True        # Enable/disable wandb logging
+WANDB_PROJECT = "DSA-image-classification"
+WANDB_ENTITY = None         # Wandb team/user name (None = default)
+WANDB_LOG_FREQ = 1          # Log metrics every N epochs
 
 # ============ Random Seed ============
 SEED = 42
