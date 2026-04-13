@@ -13,7 +13,7 @@ CHECKPOINT_DIR = OUTPUT_DIR / "checkpoints"
 LOG_DIR = OUTPUT_DIR / "logs"
 
 # ============ Data Configuration ============
-IMG_SIZE = 224          # Input image size for the model
+IMG_SIZE = 512          # Input image size for the model
 NUM_WORKERS = 4         # DataLoader workers
 TRAIN_RATIO = 0.8       # Training set ratio
 TEST_RATIO = 0.2        # Test set ratio
