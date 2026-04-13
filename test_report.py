@@ -140,7 +140,7 @@ def generate_chart(modules, save_path):
     print(f"Chart saved to {save_path}")
 
 
-def generate_markdown_report(modules, exit_code, save_path):
+def generate_markdown_report(modules, save_path):
     """Generate a Markdown report summarising all test results."""
     total_passed = sum(len(m["passed"]) for m in modules.values())
     total_failed = sum(len(m["failed"]) + len(m["errors"]) for m in modules.values())
@@ -249,7 +249,7 @@ def main():
 
     print_console_summary(modules)
     generate_chart(modules, CHART_PNG)
-    generate_markdown_report(modules, exit_code, REPORT_MD)
+    generate_markdown_report(modules, REPORT_MD)
 
     print(f"\n📄 Markdown report: {REPORT_MD}")
     print(f"📊 Chart:           {CHART_PNG}")

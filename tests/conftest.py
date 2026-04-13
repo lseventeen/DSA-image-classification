@@ -39,7 +39,11 @@ def _create_synthetic_image(path: Path, size=(64, 64), mode="L"):
 
 @pytest.fixture()
 def synthetic_data_dir(tmp_path):
-    """Create a temporary data directory with two classes, 6 images each."""
+    """Create a temporary data directory with two classes, 6 images each.
+
+    Returns:
+        tuple[Path, list[str]]: ``(data_dir_path, class_names)``
+    """
     classes = ["class_a", "class_b"]
     for cls in classes:
         cls_dir = tmp_path / cls
@@ -51,7 +55,11 @@ def synthetic_data_dir(tmp_path):
 
 @pytest.fixture()
 def synthetic_rgb_data_dir(tmp_path):
-    """Create a temporary data directory with RGB images."""
+    """Create a temporary data directory with RGB images.
+
+    Returns:
+        tuple[Path, list[str]]: ``(data_dir_path, class_names)``
+    """
     classes = ["cat", "dog"]
     for cls in classes:
         cls_dir = tmp_path / cls
