@@ -9,7 +9,10 @@ import pytest
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import config
+from dataset import create_data_loaders
 from evaluate import collect_predictions, plot_confusion_matrix, plot_training_history
+from model import build_model
 
 
 class _FakeLoader:
@@ -86,3 +89,58 @@ class TestPlotTrainingHistory:
         plot_training_history(history_json, save_path)
         assert save_path.exists()
         assert save_path.stat().st_size > 0
+
+
+class TestEvaluateOnTestSetImages:
+    """End-to-end evaluation should work correctly on test-set images."""
+
+    def test_collect_predictions_on_test_set(self, synthetic_data_dir, tmp_path, monkeypatch):
+        """collect_predictions should produce valid outputs on real test-set DataLoader."""
+        data_dir, _ = synthetic_data_dir
+        monkeypatch.setattr(config, "DATA_DIR", data_dir)
+        monkeypatch.setattr(config, "IMG_SIZE", 32)
+        monkeypatch.setattr(config, "SPLIT_FILE", tmp_path / "split.json")
+        monkeypatch.setattr(config, "TEST_RATIO", 0.5)
+
+        _, test_loader, class_names = create_data_loaders(
+            data_dir=data_dir, batch_size=2, num_workers=0, seed=42,
+        )
+        num_classes = len(class_names)
+        model = build_model(
+            num_classes, model_name="densenet121",
+            in_channels=1, pretrained=False,
+        )
+
+        labels, preds, probs = collect_predictions(model, test_loader, device="cpu")
+
+        test_size = len(test_loader.dataset)
+        assert labels.shape == (test_size,)
+        assert preds.shape == (test_size,)
+        assert probs.shape == (test_size, num_classes)
+        # All predictions should be valid class indices
+        assert all(0 <= p < num_classes for p in preds)
+        # Probabilities should sum to 1
+        np.testing.assert_allclose(probs.sum(axis=1), 1.0, atol=1e-5)
+
+    def test_confusion_matrix_on_test_set(self, synthetic_data_dir, tmp_path, monkeypatch):
+        """Confusion matrix should be generated from test-set predictions."""
+        data_dir, _ = synthetic_data_dir
+        monkeypatch.setattr(config, "DATA_DIR", data_dir)
+        monkeypatch.setattr(config, "IMG_SIZE", 32)
+        monkeypatch.setattr(config, "SPLIT_FILE", tmp_path / "split.json")
+        monkeypatch.setattr(config, "TEST_RATIO", 0.5)
+
+        _, test_loader, class_names = create_data_loaders(
+            data_dir=data_dir, batch_size=2, num_workers=0, seed=42,
+        )
+        model = build_model(
+            len(class_names), model_name="densenet121",
+            in_channels=1, pretrained=False,
+        )
+
+        labels, preds, _ = collect_predictions(model, test_loader, device="cpu")
+
+        cm_path = tmp_path / "test_cm.png"
+        plot_confusion_matrix(labels, preds, class_names, cm_path)
+        assert cm_path.exists()
+        assert cm_path.stat().st_size > 0
