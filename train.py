@@ -85,7 +85,7 @@ def train(args):
     print(f"Using device: {device}")
 
     # --- Data ---
-    train_loader, val_loader, test_loader, class_names = create_data_loaders(
+    train_loader, test_loader, class_names = create_data_loaders(
         batch_size=args.batch_size,
         seed=args.seed,
     )
@@ -122,11 +122,11 @@ def train(args):
     )
 
     # --- Training loop ---
-    best_val_acc = 0.0
+    best_test_acc = 0.0
     patience_counter = 0
     history = {
         "train_loss": [], "train_acc": [],
-        "val_loss": [], "val_acc": [],
+        "test_loss": [], "test_acc": [],
     }
 
     print(f"\n{'=' * 60}")
@@ -139,29 +139,29 @@ def train(args):
         train_loss, train_acc = train_one_epoch(
             model, train_loader, criterion, optimizer, device
         )
-        val_loss, val_acc = validate(model, val_loader, criterion, device)
+        test_loss, test_acc = validate(model, test_loader, criterion, device)
         scheduler.step()
 
         history["train_loss"].append(train_loss)
         history["train_acc"].append(train_acc)
-        history["val_loss"].append(val_loss)
-        history["val_acc"].append(val_acc)
+        history["test_loss"].append(test_loss)
+        history["test_acc"].append(test_acc)
 
         lr = optimizer.param_groups[0]["lr"]
         print(
             f"Epoch [{epoch:3d}/{args.epochs}]  "
             f"Train Loss: {train_loss:.4f}  Acc: {train_acc:.4f}  |  "
-            f"Val Loss: {val_loss:.4f}  Acc: {val_acc:.4f}  |  "
+            f"Test Loss: {test_loss:.4f}  Acc: {test_acc:.4f}  |  "
             f"LR: {lr:.6f}"
         )
 
         # Checkpoint best model
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
+        if test_acc > best_test_acc:
+            best_test_acc = test_acc
             patience_counter = 0
             ckpt_path = config.CHECKPOINT_DIR / "best_model.pth"
             torch.save(model.state_dict(), ckpt_path)
-            print(f"  ✓ Best model saved (val_acc={val_acc:.4f})")
+            print(f"  ✓ Best model saved (test_acc={test_acc:.4f})")
         else:
             patience_counter += 1
             if patience_counter >= args.patience:
@@ -173,7 +173,7 @@ def train(args):
 
     elapsed = time.time() - start_time
     print(f"\nTraining complete in {elapsed / 60:.1f} minutes")
-    print(f"Best validation accuracy: {best_val_acc:.4f}")
+    print(f"Best test accuracy: {best_test_acc:.4f}")
 
     # --- Save final model and training history ---
     torch.save(model.state_dict(), config.CHECKPOINT_DIR / "last_model.pth")
@@ -187,29 +187,6 @@ def train(args):
     meta = {"class_names": class_names, "model_name": args.model}
     with open(config.CHECKPOINT_DIR / "meta.json", "w") as f:
         json.dump(meta, f, indent=2)
-
-    # --- Evaluate on test set ---
-    print(f"\n{'=' * 60}")
-    print("Evaluating on test set...")
-    print(f"{'=' * 60}")
-
-    best_model = build_model(
-        num_classes,
-        model_name=args.model,
-        in_channels=config.IN_CHANNELS,
-        pretrained=False,
-    )
-    best_model.load_state_dict(
-        torch.load(
-            config.CHECKPOINT_DIR / "best_model.pth",
-            map_location=device,
-            weights_only=True,
-        )
-    )
-    best_model.to(device)
-
-    test_loss, test_acc = validate(best_model, test_loader, criterion, device)
-    print(f"Test Loss: {test_loss:.4f}  |  Test Acc: {test_acc:.4f}")
 
     return history
 

@@ -79,19 +79,19 @@ def plot_training_history(history_path, save_path):
 
     # Loss
     ax1.plot(epochs, history["train_loss"], label="Train Loss")
-    ax1.plot(epochs, history["val_loss"], label="Val Loss")
+    ax1.plot(epochs, history["test_loss"], label="Test Loss")
     ax1.set_xlabel("Epoch")
     ax1.set_ylabel("Loss")
-    ax1.set_title("Training & Validation Loss")
+    ax1.set_title("Training & Test Loss")
     ax1.legend()
     ax1.grid(True, alpha=0.3)
 
     # Accuracy
     ax2.plot(epochs, history["train_acc"], label="Train Acc")
-    ax2.plot(epochs, history["val_acc"], label="Val Acc")
+    ax2.plot(epochs, history["test_acc"], label="Test Acc")
     ax2.set_xlabel("Epoch")
     ax2.set_ylabel("Accuracy")
-    ax2.set_title("Training & Validation Accuracy")
+    ax2.set_title("Training & Test Accuracy")
     ax2.legend()
     ax2.grid(True, alpha=0.3)
 
@@ -117,7 +117,7 @@ def evaluate(args):
         model_name = args.model
 
     # Data
-    _, _, test_loader, class_names = create_data_loaders()
+    _, test_loader, class_names = create_data_loaders()
     num_classes = len(class_names)
 
     # Model
