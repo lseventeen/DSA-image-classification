@@ -6,6 +6,7 @@ that handles various image formats (TIFF, PNG, JPEG) and bit depths natively.
 """
 
 from monai import transforms as mt
+from monai.data.image_reader import PILReader
 
 import config
 
@@ -38,7 +39,8 @@ def get_train_transforms():
     maintaining the aspect ratio, then zero-pad to a square.
     """
     return mt.Compose([
-        mt.LoadImaged(keys=["image"], image_only=True),
+        mt.LoadImaged(keys=["image"], image_only=True,
+                      reader=PILReader()),
         mt.EnsureChannelFirstd(keys=["image"]),
         EnsureSingleChanneld(keys=["image"]),
         mt.ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
@@ -69,7 +71,8 @@ def get_val_transforms():
     maintaining the aspect ratio, then zero-pad to a square.
     """
     return mt.Compose([
-        mt.LoadImaged(keys=["image"], image_only=True),
+        mt.LoadImaged(keys=["image"], image_only=True,
+                      reader=PILReader()),
         mt.EnsureChannelFirstd(keys=["image"]),
         EnsureSingleChanneld(keys=["image"]),
         mt.ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
