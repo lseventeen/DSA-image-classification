@@ -15,9 +15,9 @@ LOG_DIR = OUTPUT_DIR / "logs"
 # ============ Data Configuration ============
 IMG_SIZE = 224          # Input image size for the model
 NUM_WORKERS = 4         # DataLoader workers
-TRAIN_RATIO = 0.7       # Training set ratio
-VAL_RATIO = 0.15        # Validation set ratio
-TEST_RATIO = 0.15       # Test set ratio
+TRAIN_RATIO = 0.8       # Training set ratio
+TEST_RATIO = 0.2        # Test set ratio
+SPLIT_FILE = DATA_DIR / "split.json"  # Cached train/test split
 
 # ============ Model Configuration ============
 # Options: densenet121, densenet169, densenet201, efficientnet-b0, se_resnet50

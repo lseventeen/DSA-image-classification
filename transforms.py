@@ -33,14 +33,20 @@ def get_train_transforms():
 
     Since the dataset is small (~500 images), aggressive augmentation
     helps prevent overfitting.
+
+    Resize strategy: downsample the long edge to ``IMG_SIZE`` while
+    maintaining the aspect ratio, then zero-pad to a square.
     """
     return mt.Compose([
         mt.LoadImaged(keys=["image"], image_only=True),
         mt.EnsureChannelFirstd(keys=["image"]),
         EnsureSingleChanneld(keys=["image"]),
         mt.ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
-        mt.Resized(keys=["image"],
-                   spatial_size=(config.IMG_SIZE, config.IMG_SIZE)),
+        mt.Resized(keys=["image"], spatial_size=config.IMG_SIZE,
+                   size_mode="longest"),
+        mt.SpatialPadd(keys=["image"],
+                       spatial_size=(config.IMG_SIZE, config.IMG_SIZE),
+                       mode="constant"),
         # --- augmentation ---
         mt.RandFlipd(keys=["image"], prob=0.5, spatial_axis=1),
         mt.RandFlipd(keys=["image"], prob=0.3, spatial_axis=0),
@@ -57,13 +63,20 @@ def get_train_transforms():
 
 
 def get_val_transforms():
-    """Validation / test transforms — deterministic, no augmentation."""
+    """Test transforms — deterministic, no augmentation.
+
+    Resize strategy: downsample the long edge to ``IMG_SIZE`` while
+    maintaining the aspect ratio, then zero-pad to a square.
+    """
     return mt.Compose([
         mt.LoadImaged(keys=["image"], image_only=True),
         mt.EnsureChannelFirstd(keys=["image"]),
         EnsureSingleChanneld(keys=["image"]),
         mt.ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
-        mt.Resized(keys=["image"],
-                   spatial_size=(config.IMG_SIZE, config.IMG_SIZE)),
+        mt.Resized(keys=["image"], spatial_size=config.IMG_SIZE,
+                   size_mode="longest"),
+        mt.SpatialPadd(keys=["image"],
+                       spatial_size=(config.IMG_SIZE, config.IMG_SIZE),
+                       mode="constant"),
         mt.EnsureTyped(keys=["image", "label"]),
     ])
