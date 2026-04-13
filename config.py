@@ -21,7 +21,7 @@ SPLIT_FILE = DATA_DIR / "split.json"  # Cached train/test split
 
 # ============ Model Configuration ============
 # Options: densenet121, densenet169, densenet201, efficientnet-b0, se_resnet50
-MODEL_NAME = "densenet121"
+MODEL_NAME = "efficientnet-b0"
 IN_CHANNELS = 1          # 1 for grayscale medical images
 PRETRAINED = True         # Use pre-trained weights (MONAI model zoo)
 FREEZE_BACKBONE = False   # Whether to freeze backbone layers initially
