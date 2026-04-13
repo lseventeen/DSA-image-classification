@@ -1,5 +1,5 @@
 """
-Project configuration for X-ray image classification.
+Project configuration for medical image classification (MONAI).
 """
 
 import os
@@ -20,9 +20,12 @@ VAL_RATIO = 0.15        # Validation set ratio
 TEST_RATIO = 0.15       # Test set ratio
 
 # ============ Model Configuration ============
-MODEL_NAME = "resnet18"  # Options: resnet18, resnet34, resnet50
-PRETRAINED = True        # Use ImageNet pre-trained weights
-FREEZE_BACKBONE = False  # Whether to freeze backbone layers initially
+# Options: densenet121, densenet169, densenet201, efficientnet-b0, se_resnet50
+MODEL_NAME = "densenet121"
+IN_CHANNELS = 1          # 1 for grayscale medical images
+PRETRAINED = True         # Use pre-trained weights (MONAI model zoo)
+FREEZE_BACKBONE = False   # Whether to freeze backbone layers initially
+DROPOUT_PROB = 0.2        # Dropout probability for DenseNet
 
 # ============ Training Configuration ============
 BATCH_SIZE = 16

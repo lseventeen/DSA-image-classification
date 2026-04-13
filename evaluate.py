@@ -36,8 +36,10 @@ def collect_predictions(model, loader, device):
     all_labels = []
     all_probs = []
 
-    for images, labels in tqdm(loader, desc="Evaluating"):
-        images = images.to(device)
+    for batch_data in tqdm(loader, desc="Evaluating"):
+        images = batch_data["image"].to(device)
+        labels = batch_data["label"]
+
         outputs = model(images)
         probs = torch.softmax(outputs, dim=1)
         _, preds = outputs.max(1)
@@ -123,7 +125,12 @@ def evaluate(args):
     if not checkpoint.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
 
-    model = build_model(num_classes, model_name=model_name, pretrained=False)
+    model = build_model(
+        num_classes,
+        model_name=model_name,
+        in_channels=config.IN_CHANNELS,
+        pretrained=False,
+    )
     model.load_state_dict(
         torch.load(checkpoint, map_location=device, weights_only=True)
     )

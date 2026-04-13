@@ -1,5 +1,5 @@
 """
-Predict the class of a single X-ray image.
+Predict the class of a single medical image using MONAI.
 
 Usage:
     python predict.py path/to/image.tif
@@ -9,22 +9,29 @@ Usage:
 
 import argparse
 import json
-import os
 from pathlib import Path
 
 import torch
 from tqdm import tqdm
 
 import config
-from dataset import XRayDataset
 from model import build_model
 from transforms import get_val_transforms
 
 
+SUPPORTED_EXTENSIONS = {".tif", ".tiff", ".png", ".jpg", ".jpeg"}
+
+
 def predict_single(image_path, model, transform, class_names, device):
-    """Predict class for a single image. Returns (class_name, confidence, probs)."""
-    image = XRayDataset._load_image(image_path)
-    tensor = transform(image).unsqueeze(0).to(device)
+    """Predict class for a single image.
+
+    Returns:
+        (class_name, confidence, probs_numpy)
+    """
+    # Build a MONAI dict item and apply the val transforms pipeline
+    data = {"image": str(image_path), "label": 0}
+    transformed = transform(data)
+    tensor = transformed["image"].unsqueeze(0).to(device)
 
     with torch.no_grad():
         output = model(tensor)
@@ -53,7 +60,12 @@ def main(args):
     if not checkpoint.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
 
-    model = build_model(len(class_names), model_name=model_name, pretrained=False)
+    model = build_model(
+        len(class_names),
+        model_name=model_name,
+        in_channels=config.IN_CHANNELS,
+        pretrained=False,
+    )
     model.load_state_dict(
         torch.load(checkpoint, map_location=device, weights_only=True)
     )
@@ -65,10 +77,9 @@ def main(args):
 
     if input_path.is_dir():
         # Batch prediction on a directory
-        supported = {".tif", ".tiff", ".png", ".jpg", ".jpeg"}
         files = sorted(
             f for f in input_path.iterdir()
-            if f.suffix.lower() in supported
+            if f.suffix.lower() in SUPPORTED_EXTENSIONS
         )
         if not files:
             print(f"No supported images found in {input_path}")
@@ -76,8 +87,9 @@ def main(args):
 
         print(f"Predicting {len(files)} images from {input_path}\n")
         for fpath in tqdm(files, desc="Predicting"):
-            cls, conf, _ = predict_single(fpath, model, transform,
-                                          class_names, device)
+            cls, conf, _ = predict_single(
+                fpath, model, transform, class_names, device
+            )
             print(f"  {fpath.name:40s} → {cls:20s} ({conf:.4f})")
     else:
         # Single image
@@ -94,11 +106,16 @@ def main(args):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Predict X-ray image class")
-    parser.add_argument("input", type=str,
-                        help="Path to image file or directory")
-    parser.add_argument("--checkpoint", type=str,
-                        default=str(config.CHECKPOINT_DIR / "best_model.pth"))
+    parser = argparse.ArgumentParser(
+        description="Predict medical image class (MONAI)"
+    )
+    parser.add_argument(
+        "input", type=str, help="Path to image file or directory"
+    )
+    parser.add_argument(
+        "--checkpoint", type=str,
+        default=str(config.CHECKPOINT_DIR / "best_model.pth"),
+    )
     parser.add_argument("--model", type=str, default=config.MODEL_NAME)
     return parser.parse_args()
 
