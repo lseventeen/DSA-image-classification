@@ -87,7 +87,7 @@ class XRayDataset(Dataset):
             img_array = tifffile.imread(path)
 
             # Handle multi-page TIFF — take first frame
-            if img_array.ndim > 2 and img_array.shape[0] > 1 and img_array.ndim == 3:
+            if img_array.ndim == 3 and img_array.shape[0] > 1:
                 # Could be (pages, H, W) or (H, W, C)
                 if img_array.shape[2] in (3, 4):
                     pass  # (H, W, C) — keep as is

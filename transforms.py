@@ -30,6 +30,9 @@ def get_train_transforms():
         transforms.RandomGrayscale(p=0.1),
         transforms.ToTensor(),
         transforms.Normalize(
+            # ImageNet statistics — used because the pre-trained ResNet
+            # backbone expects inputs normalized this way, even for
+            # grayscale X-ray images converted to 3-channel RGB.
             mean=[0.485, 0.456, 0.406],
             std=[0.229, 0.224, 0.225],
         ),
